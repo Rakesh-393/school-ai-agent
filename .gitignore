@@ -1,0 +1,24 @@
+# --- secrets: never commit these ---
+.env
+.env.*
+!.env.example
+*.key
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- app state: regenerate with `flask seed-db --reset` and `flask ingest-docs` ---
+instance/
+*.db
+*.sqlite3
+
+# --- editors / os ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
