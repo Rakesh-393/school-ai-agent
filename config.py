@@ -20,7 +20,12 @@ class Config:
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
 
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    # gpt-oss models are REASONING models: they think before answering, which on
+    # a tool-routing task is mostly wasted time. Measured on this project,
+    # "low" cut a tool-routing call from 4300ms to 580ms with the same tool
+    # choice. Raise to "medium"/"high" only if you see it picking wrong tools.
+    GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "low")
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")

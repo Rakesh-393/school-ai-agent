@@ -1,9 +1,22 @@
 """Flask application factory + CLI commands."""
+import sys
+
 import click
 from flask import Flask
 
 from config import Config
 from app.models import db
+
+# Windows terminals default to cp1252, which cannot encode much of what an LLM
+# emits -- narrow no-break spaces (U+202F), en/em dashes, curly quotes. Printing
+# one raises UnicodeEncodeError and kills the command. Force UTF-8 and degrade
+# gracefully instead of crashing. Harmless on macOS/Linux, where it is already
+# UTF-8. Must run before any output.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 
 def create_app(config_object=Config) -> Flask:

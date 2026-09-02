@@ -183,9 +183,28 @@ def _find_class(label: str, branch: str | None = None):
     return db.session.get(ClassSection, r.best.id), None
 
 
-def _month_range(month: str | None):
-    """'july' / '2025-07' / None -> (first_day, last_day). Defaults to current month."""
-    today = date.today()
+def _latest_attendance_day(student_id: int | None = None) -> date | None:
+    """Most recent day we hold attendance for (optionally for one student)."""
+    q = db.session.query(func.max(Attendance.day))
+    if student_id is not None:
+        q = q.filter(Attendance.student_id == student_id)
+    return q.scalar()
+
+
+def _month_range(month: str | None, anchor: date | None = None):
+    """
+    'july' / '2025-07' / None -> (first_day, last_day).
+
+    `anchor` is what "no month given" means. It defaults to today, but callers
+    pass the latest day they actually hold data for.
+
+    WHY: attendance is recorded up to the last school day, not up to today. On
+    the 2nd of a new month, "what's Kabir's attendance?" with month=None asked
+    for the new month, found zero rows, and the agent reported no records for a
+    student with four months of history. Defaulting to the current *calendar*
+    month is only correct if your data is always current -- which it never is.
+    """
+    today = anchor or date.today()
     if not month:
         y, m = today.year, today.month
     else:
@@ -270,7 +289,8 @@ def get_attendance_summary(student_name: str, month: str | None = None) -> dict:
     if err:
         return err
 
-    start, end = _month_range(month)
+    latest = _latest_attendance_day(s.id)
+    start, end = _month_range(month, anchor=latest)
     rows = (
         Attendance.query.filter(
             Attendance.student_id == s.id,
@@ -280,10 +300,18 @@ def get_attendance_summary(student_name: str, month: str | None = None) -> dict:
         .all()
     )
     if not rows:
+        # Say what we DO have. "No records" with no further detail sends the
+        # agent off to invent an explanation; a concrete range lets it offer
+        # the user a period that will actually work.
+        earliest = db.session.query(func.min(Attendance.day)).filter(
+            Attendance.student_id == s.id
+        ).scalar()
         return {
             "student": s.full_name,
             "period": f"{start} to {end}",
             "message": "No attendance records for this period.",
+            "records_available_from": str(earliest) if earliest else None,
+            "records_available_to": str(latest) if latest else None,
         }
 
     counts: dict[str, int] = {}
@@ -457,7 +485,7 @@ def get_class_attendance_report(
     if err:
         return err
 
-    start, end = _month_range(month)
+    start, end = _month_range(month, anchor=_latest_attendance_day())
     rows = (
         db.session.query(
             Student.full_name,
@@ -704,6 +732,37 @@ TOOLS: list[dict] = [
 ]
 
 
+def _allow_null_on_optional(tools: list[dict]) -> list[dict]:
+    """
+    Every OPTIONAL parameter must also accept null. This is not cosmetic.
+
+    Models fill unused optional arguments with null constantly -- it is their
+    natural way of saying "not applicable". Some providers (Groq, notably)
+    validate the model's tool call against your schema SERVER-SIDE and reject
+    the whole request if a field typed as a bare "string" arrives as null:
+
+        400 tool_use_failed - `/board`: expected string, but got null
+
+    You cannot stop the model doing it, so accept it: declare optional
+    properties as ["string", "null"], then strip the nulls in execute() so the
+    Python default applies. Done here in a loop rather than by hand on each
+    schema, so tools you add later are covered automatically.
+    """
+    for t in tools:
+        schema = t["input_schema"]
+        required = set(schema.get("required", []))
+        for name, prop in schema["properties"].items():
+            ty = prop.get("type")
+            # isinstance guard also makes this idempotent, which matters because
+            # BRANCH_ARG is one dict shared by three tools.
+            if name not in required and isinstance(ty, str) and ty != "null":
+                prop["type"] = [ty, "null"]
+    return tools
+
+
+TOOLS = _allow_null_on_optional(TOOLS)
+
+
 def tools_for_role(role: str) -> list[dict]:
     """Only advertise tools this role may call -- the model can't misuse what it can't see."""
     return [
@@ -724,9 +783,12 @@ def execute(name: str, args: dict, role: str) -> dict:
             "message": f"A '{role}' is not permitted to use {name}. Tell the user politely.",
         }
     try:
-        # Filter to declared keys in case the model invents an extra argument.
+        # Filter to declared keys in case the model invents an extra argument,
+        # and drop nulls so the function's own default applies. Passing
+        # days=None straight through would blow up in timedelta(days=None).
         allowed = set(spec["input_schema"]["properties"])
-        return spec["fn"](**{k: v for k, v in args.items() if k in allowed})
+        clean = {k: v for k, v in args.items() if k in allowed and v is not None}
+        return spec["fn"](**clean)
     except TypeError as e:
         return {"error": "bad_arguments", "message": str(e)}
     except Exception as e:  # never let a tool crash the whole request

@@ -50,10 +50,13 @@ class LLMReply:
 class OpenAICompatClient:
     """Groq / Gemini / Ollama / OpenRouter -- same wire format, different base_url."""
 
-    def __init__(self, api_key: str, base_url: str, model: str):
+    def __init__(self, api_key: str, base_url: str, model: str, extra: dict | None = None):
         from openai import OpenAI
 
         self.model = model
+        # Provider-specific request params (e.g. Groq's reasoning_effort).
+        # Kept out of chat() so the call site stays provider-agnostic.
+        self.extra = extra or {}
         self._c = OpenAI(api_key=api_key or "not-needed", base_url=base_url)
 
     @staticmethod
@@ -71,7 +74,7 @@ class OpenAICompatClient:
         ]
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None) -> LLMReply:
-        kwargs = {"model": self.model, "messages": messages, "temperature": 0.1}
+        kwargs = {"model": self.model, "messages": messages, "temperature": 0.1, **self.extra}
         if tools:
             kwargs["tools"] = self.to_wire_tools(tools)
             kwargs["tool_choice"] = "auto"
@@ -454,8 +457,13 @@ def get_llm():
     if p == "mock":
         return MockClient()
     if p == "groq":
+        # reasoning_effort is only understood by the gpt-oss family; sending it
+        # to another model is a 400, so gate on the model name.
+        extra = ({"reasoning_effort": Config.GROQ_REASONING_EFFORT}
+                 if "gpt-oss" in Config.GROQ_MODEL else {})
         return OpenAICompatClient(
-            Config.GROQ_API_KEY, "https://api.groq.com/openai/v1", Config.GROQ_MODEL
+            Config.GROQ_API_KEY, "https://api.groq.com/openai/v1",
+            Config.GROQ_MODEL, extra,
         )
     if p == "gemini":
         return OpenAICompatClient(
