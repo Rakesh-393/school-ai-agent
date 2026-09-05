@@ -185,6 +185,8 @@ class MockClient:
 
     RULES = [
         # Order matters -- first match wins, so put the specific rules first.
+                (("admission fee", "admission fees", "enrollment fee", "joining fee"),
+                 "search_school_documents", "query"),
         (("how many branch", "how many campus", "branches", "campuses",
           "list your school", "which branch", "which campus"), "list_branches", None),
         (("branch", "campus"), "get_branch_info", "branch_name"),
@@ -405,6 +407,11 @@ class MockClient:
             return "\n".join(lines)
 
         if tool == "search_school_documents":
+            if not p.get("answerable", True):
+                return ("I couldn't find the exact detail in the school documents. "
+                        f"Please contact the school office at {Config.SCHOOL_OFFICE_PHONE} "
+                        "for the current amount. "
+                        "Would you like to book a campus demo?")
             top = p["passages"][0]
             crumb, _, body = top["text"].partition("\n\n")
             return f"{body.strip()}\n\n_Source: {top['source']} — {crumb.strip()}_"
@@ -431,7 +438,8 @@ class MockClient:
         if kind == "not_found":
             extra = p.get("available_branches") or p.get("available_classes")
             tail = f"\n\nAvailable: {', '.join(extra)}" if extra else ""
-            return f"I have no record matching \"{p['query']}\".{tail}"
+            return (f"I have no record matching \"{p['query']}\".{tail}\n\n"
+                    f"Please contact the school office at {Config.SCHOOL_OFFICE_PHONE}.")
 
         if kind == "unknown_board":
             return (f"No campus uses the \"{p['query']}\" board. "
@@ -439,7 +447,7 @@ class MockClient:
 
         if kind == "forbidden":
             return ("That information isn't available for your role. "
-                    "Please contact the school office.")
+                    f"Please contact the school office at {Config.SCHOOL_OFFICE_PHONE}.")
 
         return p.get("message", kind)
 

@@ -37,7 +37,25 @@
          border-top: 1px solid var(--line); }
   input[type=text] { flex: 1; padding: 10px 13px; border: 1px solid var(--line);
                      border-radius: 8px; font: inherit; }
+  select.question-picker { max-width: 190px; padding: 10px 8px; color: var(--muted); }
   button.send { background: var(--accent); color: #fff; border-color: var(--accent); padding: 10px 18px; }
+  .phone { color: var(--accent); border-color: #cfe0d6; text-decoration: none; padding: 6px 10px;
+           border-radius: 7px; white-space: nowrap; }
+  .voice { min-width: 44px; padding: 10px; }
+  .voice.listening { background: #f8e5df; border-color: #d88b75; color: #8a3d24; }
+  .voice-status { min-height: 20px; padding: 0 18px 8px; color: var(--muted); font-size: 12px; }
+  .welcome { display: flex; gap: 10px; align-items: flex-start; }
+  .welcome strong { color: var(--accent); }
+  .recording-popup { position: fixed; inset: 0; display: none; place-items: center;
+                     background: rgba(28, 33, 40, .38); z-index: 10; }
+  .recording-popup.show { display: grid; }
+  .recording-card { width: min(340px, calc(100vw - 36px)); padding: 26px; text-align: center;
+                    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+                    box-shadow: 0 18px 45px rgba(28, 33, 40, .2); }
+  .recording-icon { font-size: 42px; line-height: 1; margin-bottom: 12px; }
+  .recording-card h2 { margin: 0 0 6px; font-size: 18px; }
+  .recording-card p { margin: 0 0 18px; color: var(--muted); }
+  .stop-recording { background: #8a3d24; color: #fff; border-color: #8a3d24; }
   button:disabled { opacity: .55; cursor: default; }
   .dots::after { content: '.'; animation: d 1.2s steps(4,end) infinite; }
   @keyframes d { 0%{content:'.'} 33%{content:'..'} 66%{content:'...'} }
@@ -47,6 +65,7 @@
 <div class="wrap">
   <header>
     <h1>Paramita Schools Assistant<br><span class="sub">Flask &middot; RAG &middot; tool-calling agent</span></h1>
+    <a class="phone" href="tel:{{ office_phone|replace(' ', '')|replace('/', '') }}" title="Call the school office">Call office</a>
     <select id="role" title="Changes which tools the agent may call">
       <option value="parent">Parent</option>
       <option value="teacher">Teacher</option>
@@ -56,23 +75,34 @@
   </header>
 
   <div id="log">
-    <div class="msg bot">Hello. I cover all five Paramita campuses. Ask me about branches, attendance, marks, fees, homework, timetables, or school policy.</div>
-  </div>
-
-  <div class="chips">
-    <span class="chip">How many branches do you have?</span>
-    <span class="chip">Which branch is CBSE?</span>
-    <span class="chip">Tell me about the Explorica campus</span>
-    <span class="chip">Kabir Menon's attendance this month</span>
-    <span class="chip">Any pending fees for Diya Patel?</span>
-    <span class="chip">What is the leave policy?</span>
-    <span class="chip">Homework for 7A at Heritage</span>
+    <div class="msg bot welcome"><span aria-hidden="true">&#128075;</span><div><strong>Hello, welcome to Paramita Schools.</strong><br>I can help with campuses, attendance, marks, fees, homework, timetables, and school policies.</div></div>
   </div>
 
   <form id="form">
     <input type="text" id="q" placeholder="Ask a question..." autocomplete="off" required>
+    <select class="question-picker" id="questionPicker" title="Choose a suggested question">
+      <option value="">Suggested questions</option>
+      <option>How many branches do you have?</option>
+      <option>Which branch is CBSE?</option>
+      <option>Tell me about the Explorica campus</option>
+      <option>Kabir Menon's attendance this month</option>
+      <option>Any pending fees for Diya Patel?</option>
+      <option>What is the leave policy?</option>
+      <option>Homework for 7A at Heritage</option>
+    </select>
+    <button class="voice" id="voice" type="button" title="Speak your question" aria-label="Speak your question">&#127908;</button>
     <button class="send" type="submit">Send</button>
   </form>
+  <div class="voice-status" id="voiceStatus" role="status" aria-live="polite"></div>
+</div>
+
+<div class="recording-popup" id="recordingPopup" role="dialog" aria-modal="true" aria-labelledby="recordingTitle">
+  <div class="recording-card">
+    <div class="recording-icon" aria-hidden="true">&#127911;</div>
+    <h2 id="recordingTitle">Recording your question</h2>
+    <p id="recordingText">Speak clearly, then press Stop or Enter.</p>
+    <button class="stop-recording" id="stopRecording" type="button">Stop recording</button>
+  </div>
 </div>
 
 <script>
@@ -80,6 +110,75 @@ const log = document.getElementById('log');
 const form = document.getElementById('form');
 const q = document.getElementById('q');
 const roleSel = document.getElementById('role');
+const voice = document.getElementById('voice');
+const questionPicker = document.getElementById('questionPicker');
+const voiceStatus = document.getElementById('voiceStatus');
+const recordingPopup = document.getElementById('recordingPopup');
+const stopRecording = document.getElementById('stopRecording');
+
+questionPicker.onchange = () => {
+  if (questionPicker.value) {
+    q.value = questionPicker.value;
+    q.focus();
+    questionPicker.value = '';
+  }
+};
+
+let recorder = null;
+let recording = [];
+function closeRecordingPopup() {
+  recordingPopup.classList.remove('show');
+}
+
+stopRecording.onclick = () => {
+  if (recorder && recorder.state === 'recording') recorder.stop();
+};
+
+voice.onclick = async () => {
+  if (recorder && recorder.state === 'recording') {
+    recorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    voiceStatus.textContent = 'Audio recording is not supported in this browser.';
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+    recorder = new MediaRecorder(stream);
+    recording = [];
+    recorder.ondataavailable = event => { if (event.data.size) recording.push(event.data); };
+    recorder.onstart = () => {
+      voice.classList.add('listening');
+      voice.textContent = String.fromCodePoint(0x1F3A7);
+      voiceStatus.textContent = 'Recording... click the microphone again when finished.';
+      recordingPopup.classList.add('show');
+      stopRecording.focus();
+    };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(track => track.stop());
+      voice.classList.remove('listening');
+      voice.textContent = String.fromCodePoint(0x1F3A7);
+      closeRecordingPopup();
+      voiceStatus.textContent = 'Converting your voice to text...';
+      const formData = new FormData();
+      formData.append('audio', new Blob(recording, {type: recorder.mimeType}), 'question.webm');
+      try {
+        const response = await fetch('/api/transcribe', {method: 'POST', body: formData});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Transcription failed.');
+        q.value = data.text;
+        q.focus();
+        voiceStatus.textContent = 'Voice converted. Press Send when ready.';
+      } catch (error) {
+        voiceStatus.textContent = error.message;
+      }
+    };
+    recorder.start();
+  } catch (error) {
+    voiceStatus.textContent = 'Microphone access was blocked. Allow access and try again.';
+  }
+};
 
 function esc(s){ return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
@@ -105,7 +204,7 @@ function render(md){
   return out.join('\n');
 }
 
-function bubble(text, who, trace){
+function bubble(text, who, trace, actions){
   const d = document.createElement('div');
   d.className = 'msg ' + who;
   d.innerHTML = who === 'bot' ? render(text) : esc(text);
@@ -117,6 +216,18 @@ function bubble(text, who, trace){
     ).join('<br>');
     d.appendChild(t);
   }
+  if (actions && actions.length){
+    const a = document.createElement('div');
+    a.className = 'chips';
+    actions.forEach(action => {
+      const b = document.createElement('button');
+      b.className = 'chip';
+      b.textContent = action.label;
+      b.onclick = () => send(action.message);
+      a.appendChild(b);
+    });
+    d.appendChild(a);
+  }
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;
   return d;
@@ -126,7 +237,7 @@ async function send(text){
   bubble(text, 'user');
   const pending = bubble('thinking', 'bot');
   pending.innerHTML = '<span class="dots">thinking</span>';
-  form.querySelector('button').disabled = true;
+  form.querySelector('.send').disabled = true;
 
   try {
     const r = await fetch('/api/chat', {
@@ -140,19 +251,24 @@ async function send(text){
       const b = bubble(data.error + (data.fix ? '\n\n' + data.fix : ''), 'bot');
       b.classList.add('err');
     } else {
-      bubble(`${data.answer}\n\n_${data.latency_ms} ms_`, 'bot', data.trace);
+      bubble(data.answer, 'bot', null, data.actions);
     }
   } catch (e) {
     pending.remove();
     bubble('Network error: ' + e.message, 'bot');
   } finally {
-    form.querySelector('button').disabled = false;
+    form.querySelector('.send').disabled = false;
     q.focus();
   }
 }
 
 form.onsubmit = e => { e.preventDefault(); const t = q.value.trim(); if (t){ q.value=''; send(t); } };
-document.querySelectorAll('.chip').forEach(c => c.onclick = () => send(c.textContent));
+document.onkeydown = event => {
+  if (event.key === 'Enter' && recorder && recorder.state === 'recording') {
+    event.preventDefault();
+    recorder.stop();
+  }
+};
 document.getElementById('reset').onclick = async () => {
   await fetch('/api/reset', {method:'POST'});
   log.innerHTML = '<div class="msg bot">Conversation cleared.</div>';

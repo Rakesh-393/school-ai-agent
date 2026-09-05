@@ -22,6 +22,9 @@ load_dotenv(ENV_PATH)
 
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
+    SCHOOL_OFFICE_PHONE = os.getenv(
+        "SCHOOL_OFFICE_PHONE", "+91-8886127373 / +91-9885136655"
+    )
 
     # sqlite now, mysql/postgres later -- only this line changes.
     #
@@ -39,6 +42,7 @@ class Config:
 
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
     GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    GROQ_TRANSCRIPTION_MODEL = os.getenv("GROQ_TRANSCRIPTION_MODEL", "whisper-large-v3-turbo")
     # gpt-oss models are REASONING models: they think before answering, which on
     # a tool-routing task is mostly wasted time. Measured on this project,
     # "low" cut a tool-routing call from 4300ms to 580ms with the same tool
@@ -61,6 +65,8 @@ class Config:
     DOCS_DIR = os.path.join(BASE_DIR, "data", "docs")
     RAG_COLLECTION = "school_docs"
     RAG_TOP_K = 4
+    # Below this, the nearest passage is too weak to treat as an answer.
+    RAG_MIN_SIMILARITY = float(os.getenv("RAG_MIN_SIMILARITY", "0.35"))
 
     # --- agent ---
     MAX_AGENT_STEPS = 5          # hard cap so a confused model can't loop forever

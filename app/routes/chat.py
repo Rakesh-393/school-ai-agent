@@ -94,6 +94,38 @@ def reset():
     _HISTORY.pop(session.get("sid", ""), None)
     return jsonify({"ok": True})
 
+@chat_bp.post("/transcribe")
+def transcribe():
+    """Convert a short browser recording to text for the normal chat flow."""
+    if "audio" not in request.files:
+        return jsonify({"error": "No audio recording was received."}), 400
+
+    if Config.LLM_PROVIDER != "groq" or not Config.GROQ_API_KEY:
+        return jsonify({
+            "error": "Voice transcription needs a configured Groq provider."
+        }), 503
+
+    try:
+        from openai import OpenAI
+
+        audio = request.files["audio"]
+        client = OpenAI(
+            api_key=Config.GROQ_API_KEY,
+            base_url="https://api.groq.com/openai/v1",
+        )
+        result = client.audio.transcriptions.create(
+            model=Config.GROQ_TRANSCRIPTION_MODEL,
+            file=(audio.filename or "question.webm", audio.stream, audio.mimetype),
+            response_format="json",
+            language="en",
+        )
+        text = (result.text or "").strip()
+        if not text:
+            return jsonify({"error": "No speech was detected. Please try again."}), 422
+        return jsonify({"text": text})
+    except Exception as e:
+        return jsonify({"error": _explain(e)}), 502
+
 
 @chat_bp.get("/health")
 def health():

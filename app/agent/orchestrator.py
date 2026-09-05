@@ -27,11 +27,14 @@ turns an infinite loop into a degraded-but-finite answer.
 from __future__ import annotations
 
 import time
+import re
 from datetime import date
+
+from rapidfuzz import fuzz, process, utils
 
 from config import Config
 from app.agent import tools as toolkit
-from app.agent.llm import get_llm
+from app.agent.llm import MockClient, get_llm
 
 SYSTEM_PROMPT = """You are the assistant for Paramita Schools, a group of school
 campuses in Karimnagar, Telangana. You help parents, teachers and administrators.
@@ -77,8 +80,18 @@ passages it returned.
   Never turn a gap into a denial: "I don't have anything on school lunches" is
   right; "the school does not provide lunch" is a claim you cannot support.
 - If the passages do not cover what was asked, say the documents don't cover it
-  and suggest contacting the school office. An honest gap is a correct answer;
-  a plausible invention is not. Parents act on what you tell them.
+  and suggest contacting the school office. If the question is about admissions
+  and the exact detail is unavailable, also offer: "Would you like to book a
+  campus demo?" An honest gap is a correct answer; a plausible invention is not.
+
+GENERAL QUESTIONS AND MISSING SCHOOL FACTS
+For general questions that are not school-specific, answer helpfully from your
+general knowledge and label it as general guidance. For a school-specific fact
+that was not returned by a tool, never guess: explain that the exact detail is
+not available, give the office number ({office_phone}), and offer to book a
+campus demo.
+If a search result has `answerable: false`, it is related context, not an answer
+to the user's exact question. Do not repeat it as though it answered the question.
 
 MULTI-PART QUESTIONS
 "Is Kabir below 75% and what happens if he is?" is TWO questions. Look up the
@@ -102,16 +115,109 @@ Warm, brief, professional. You are talking to busy parents and teachers.
 class SchoolAgent:
     def __init__(self, role: str = "parent"):
         self.role = role if role in ("parent", "teacher", "admin") else "parent"
-        self.llm = get_llm()
+        # Do not even construct a provider client for questions handled by the
+        # local fast path below.
+        self.llm = None
         self.tools = toolkit.tools_for_role(self.role)
+
+    FAST_INTENTS = [
+        ("list_branches", "how many branches campuses schools do you have"),
+        ("list_branches", "which branch campus is cbse cambridge state board"),
+        ("get_branch_info", "tell me about this branch campus school address phone"),
+        ("search_school_documents", "admission fee enrollment fee joining fee"),
+        ("search_school_documents", "leave policy uniform policy school rules annual day"),
+        ("get_attendance_summary", "attendance absent present percentage for student"),
+        ("get_fee_status", "pending fees fee balance dues payment for student"),
+        ("get_marks", "marks scores results grades of student"),
+        ("get_homework", "homework assignment for class"),
+        ("get_timetable", "timetable schedule periods for class"),
+    ]
+
+    @classmethod
+    def _fast_intent(cls, question: str) -> tuple[str, float] | None:
+        """Match only clear, repeatable intents; leave nuanced questions to the LLM."""
+        query = utils.default_process(question)
+        choices = {i: phrase for i, (_tool, phrase) in enumerate(cls.FAST_INTENTS)}
+        hit = process.extractOne(query, choices, scorer=fuzz.token_set_ratio)
+        if not hit:
+            return None
+        _phrase, score, index = hit
+        if score < 72:
+            return None
+        return cls.FAST_INTENTS[index][0], score
+
+    def _fast_answer(self, question: str) -> tuple[str, dict] | None:
+        matched = self._fast_intent(question)
+        if not matched:
+            return None
+
+        tool_name, _score = matched
+        if tool_name not in {tool["name"] for tool in self.tools}:
+            return None
+
+        argument = None
+        for tool in self.tools:
+            if tool["name"] == tool_name:
+                properties = tool["input_schema"].get("properties", {})
+                argument = next(iter(properties), None)
+                break
+
+        if argument == "class_name" and not re.search(
+            r"\b(?:grade|class)?\s*(?:\d{1,2}|[ivx]+)\s*[- ]?\s*[a-z]\b",
+            question.lower(),
+        ):
+            return None
+
+        args = {}
+        if argument:
+            args[argument] = MockClient._guess_arg(question, argument)
+        if tool_name == "list_branches":
+            args = {"board": board} if (board := next(
+                (b for b in ("cbse", "cambridge", "state") if b in question.lower()),
+                None,
+            )) else {}
+        result = toolkit.execute(tool_name, args, self.role)
+        answer = MockClient._render(tool_name, result)
+        trace = {
+            "step": 0,
+            "tool": tool_name,
+            "args": args,
+            "ok": "error" not in result,
+            "result": result,
+        }
+        return answer, trace
 
     def ask(self, question: str, history: list[dict] | None = None) -> dict:
         started = time.perf_counter()
 
+        fast = self._fast_answer(question)
+        if fast:
+            answer, trace_item = fast
+            actions = []
+            if "book a campus demo" in answer.lower():
+                actions.append({
+                    "label": "Book a campus demo",
+                    "message": "I would like to book a campus demo.",
+                })
+            return {
+                "answer": answer,
+                "role": self.role,
+                "trace": [trace_item],
+                "tools_used": [trace_item["tool"]],
+                "latency_ms": int((time.perf_counter() - started) * 1000),
+                "actions": actions,
+            }
+
+        self.llm = get_llm()
+
         messages: list[dict] = [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT.format(today=date.today(), role=self.role),
+                "content": SYSTEM_PROMPT.format(
+                    today=date.today(),
+                    role=self.role,
+                    office_phone=Config.SCHOOL_OFFICE_PHONE,
+                ),
             }
         ]
         messages.extend(history or [])
@@ -156,10 +262,18 @@ class SchoolAgent:
                 ]
             ).text
 
+        actions = []
+        if "book a campus demo" in answer.lower():
+          actions.append({
+            "label": "Book a campus demo",
+            "message": "I would like to book a campus demo.",
+          })
+
         return {
             "answer": answer or "Sorry, I could not work that out. Please rephrase.",
             "role": self.role,
             "trace": trace,
             "tools_used": [t["tool"] for t in trace],
             "latency_ms": int((time.perf_counter() - started) * 1000),
+          "actions": actions,
         }

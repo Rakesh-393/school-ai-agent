@@ -22,6 +22,7 @@ from sqlalchemy import case, func
 
 from app.agent import rag
 from app.agent.resolver import resolve
+from config import Config
 from app.models import (
     Attendance,
     Branch,
@@ -526,10 +527,31 @@ def search_school_documents(query: str) -> dict:
             "error": "no_documents",
             "message": "No school documents indexed. Run: flask ingest-docs",
         }
+
+    top = hits[0]
+    text = top["text"].lower()
+    asks_for_amount = any(word in query.lower() for word in
+                          ("amount", "cost", "fee", "fees", "price", "how much"))
+    asks_about_admission = "admission" in query.lower()
+    has_amount = bool(re.search(r"(?:rs|inr|₹)\s*[\d,]+|\b\d[\d,]{2,}\b", text))
+    has_admission_amount = "admission" in text and has_amount
+    answerable = top["similarity"] >= Config.RAG_MIN_SIMILARITY and (
+        not asks_for_amount or has_amount
+    ) and (
+        not asks_about_admission or has_admission_amount
+    )
     return {
         "query": query,
         "passages": hits,
-        "instruction": "Answer ONLY from these passages and cite the source filename.",
+        "answerable": answerable,
+        "instruction": (
+            "Answer the exact question only when answerable is true. If false, "
+            "say the school documents do not contain that detail; do not turn a "
+            "related policy into an answer. For general questions, answer from "
+            "your general knowledge and label it as general guidance. Cite a "
+            "school source only when you use its passage. Offer to help book a "
+            "campus demo for missing admissions information."
+        ),
     }
 
 
