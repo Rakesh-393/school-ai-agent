@@ -6,92 +6,131 @@
 <title>Paramita Schools Assistant</title>
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #fff; --line: #e3e6ea; --ink: #1c2128;
-    --muted: #6b7480; --accent: #2f6f4f; --accent-soft: #e8f1ec;
+      --bg: #eef5f0; --panel: #fff; --line: #d8e2db; --ink: #202923;
+      --muted: #68756d; --accent: #2f7650; --accent-dark: #245c3d;
+      --accent-soft: #edf6f0;
   }
   * { box-sizing: border-box; }
-  body { margin:0; font: 15px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
-         background: var(--bg); color: var(--ink); }
-  .wrap { max-width: 780px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; }
-  header { padding: 14px 18px; background: var(--panel); border-bottom: 1px solid var(--line);
-           display: flex; align-items: center; gap: 12px; }
-  header h1 { font-size: 16px; margin: 0; flex: 1; }
-  header .sub { font-size: 12px; color: var(--muted); font-weight: 400; }
-  select, button { font: inherit; padding: 6px 10px; border: 1px solid var(--line);
-                   border-radius: 7px; background: #fff; cursor: pointer; }
-  #log { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
-  .msg { max-width: 88%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; }
-  .user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 3px; }
-  .bot  { align-self: flex-start; background: var(--panel); border: 1px solid var(--line);
-          border-bottom-left-radius: 3px; }
+    body { margin:0; min-height:100vh; font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(circle at 20% 0%, #fff 0 16%, transparent 42%), var(--bg); color: var(--ink); }
+    .wrap { width: min(100%, 780px); margin: 24px auto; height: calc(100vh - 48px); min-height: 560px;
+       display: flex; flex-direction: column; background: var(--panel); border: 1px solid #d8d0da;
+       border-radius: 13px; overflow: hidden; box-shadow: 0 20px 55px rgba(74, 37, 69, .12); }
+    header { padding: 15px 18px; color: #fff; background: var(--accent); display: flex; align-items: center; gap: 11px; }
+    header h1 { font-size: 15px; line-height: 1.25; margin: 0; flex: 1; }
+    header .sub { display: block; margin-top: 3px; font-size: 11px; color: #f8dff0; font-weight: 400; }
+    .brand-avatar { width: 35px; height: 35px; display: grid; place-items: center; border: 2px solid #fff;
+          border-radius: 50%; background: #f5d7eb; color: var(--accent-dark); font-weight: 700; }
+    .online { width: 8px; height: 8px; margin-left: -17px; margin-top: 25px; border: 2px solid var(--accent);
+         border-radius: 50%; background: #42c58a; z-index: 1; }
+    select, button { font: inherit; padding: 6px 10px; border: 1px solid var(--line);
+           border-radius: 7px; background: #fff; cursor: pointer; }
+    header select { max-width: 98px; padding: 5px 6px; border: 0; color: #5e2750; }
+    .header-icon { padding: 4px 8px; border: 0; background: transparent; color: #fff; font-size: 20px; }
+    #log { flex: 1; overflow-y: auto; padding: 24px 16px 10px; display: flex; flex-direction: column; gap: 9px; }
+    .msg { max-width: 88%; padding: 9px 13px; border-radius: 10px; white-space: pre-wrap; }
+    .user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 3px; }
+    .bot  { align-self: flex-start; background: #f3f1f2; border: 0; border-bottom-left-radius: 3px; }
+    .bot.reply { display: flex; gap: 9px; align-items: flex-start; background: transparent; padding: 0; }
+    .reply-avatar { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto;
+                    border-radius: 50%; background: #f4d5e8; color: var(--accent-dark); font-weight: 700; }
+    .reply-body { max-width: calc(100% - 37px); padding: 9px 13px; background: #edf2ee; border-radius: 10px;
+                  border-bottom-left-radius: 3px; }
   .bot table { border-collapse: collapse; margin: 8px 0; font-size: 14px; }
   .bot th, .bot td { border: 1px solid var(--line); padding: 4px 9px; text-align: left; }
   .trace { font-size: 12px; color: var(--muted); margin-top: 8px; padding-top: 7px;
            border-top: 1px dashed var(--line); font-family: ui-monospace, Consolas, monospace; }
   .trace .bad { color: #b4553b; }
   .msg.err { background: #fdf2ef; border-color: #e6c4b8; color: #8a3d24; }
-  .chips { padding: 0 18px 10px; display: flex; gap: 7px; flex-wrap: wrap; }
-  .chip { font-size: 12.5px; padding: 5px 11px; border-radius: 14px;
-          background: var(--accent-soft); border: 1px solid #cfe0d6; color: #2c5a44; }
-  form { display: flex; gap: 8px; padding: 12px 18px; background: var(--panel);
-         border-top: 1px solid var(--line); }
-  input[type=text] { flex: 1; padding: 10px 13px; border: 1px solid var(--line);
-                     border-radius: 8px; font: inherit; }
-  select.question-picker { max-width: 190px; padding: 10px 8px; color: var(--muted); }
-  button.send { background: var(--accent); color: #fff; border-color: var(--accent); padding: 10px 18px; }
-  .phone { color: var(--accent); border-color: #cfe0d6; text-decoration: none; padding: 6px 10px;
-           border-radius: 7px; white-space: nowrap; }
-  .voice { min-width: 44px; padding: 10px; }
-  .voice.listening { background: #f8e5df; border-color: #d88b75; color: #8a3d24; }
-  .voice-status { min-height: 20px; padding: 0 18px 8px; color: var(--muted); font-size: 12px; }
-  .welcome { display: flex; gap: 10px; align-items: flex-start; }
-  .welcome strong { color: var(--accent); }
+    .quick-actions { display: flex; gap: 7px; flex-wrap: wrap; margin: 3px 0 9px 37px; }
+    .chip { font-size: 12px; padding: 7px 10px; border-radius: 8px;
+      background: #fff; border: 1px solid #90aa99; color: var(--accent-dark); }
+    form { display: flex; align-items: center; gap: 7px; margin: 8px 16px 7px; padding: 4px 7px 4px 14px;
+     background: var(--panel); border: 1px solid #bcb5bd; border-radius: 25px; }
+    input[type=text] { flex: 1; min-width: 0; padding: 9px 0; border: 0; outline: 0; font: inherit; }
+    select.question-picker { width: 100%; padding: 5px 0; color: var(--accent-dark); border: 0;
+                 background: #fff; outline: 0; }
+    button.send { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; background: var(--accent); color: #fff; }
+    .phone { color: #fff; border: 0; text-decoration: none; padding: 5px; white-space: nowrap; font-size: 0; }
+    .phone::before { content: '\260E'; font-size: 18px; }
+    .voice { min-width: 34px; height: 34px; padding: 5px; border: 1px solid #90aa99;
+             border-radius: 50%; background: #edf6f0; color: var(--accent-dark); }
+    .voice:hover { background: #dff2e6; border-color: var(--accent); }
+  .voice.listening { background: #dff2e6; border: 2px solid var(--accent); color: var(--accent-dark);
+                     box-shadow: 0 0 0 5px rgba(47, 118, 80, .16); animation: headphonePulse 1s ease-in-out infinite; }
+  .voice-status { min-height: 20px; padding: 0 18px 5px; color: var(--muted); font-size: 11px; text-align: center; }
+  .welcome { display: flex; gap: 9px; align-items: flex-start; background: transparent; padding: 0; }
+  .welcome strong { color: var(--ink); }
+  .welcome-avatar { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto;
+                    border-radius: 50%; background: #f4d5e8; color: var(--accent-dark); font-weight: 700; }
+  .welcome-avatar-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .welcome-online { color: #29945b; font-size: 9px; font-weight: 600; }
+  .welcome-copy { max-width: 295px; align-self: flex-start; margin-top: -41px; }
+  .welcome-copy p { margin: 0; padding: 9px 13px; background: #edf2ee; border-radius: 10px; }
   .recording-popup { position: fixed; inset: 0; display: none; place-items: center;
                      background: rgba(28, 33, 40, .38); z-index: 10; }
   .recording-popup.show { display: grid; }
   .recording-card { width: min(340px, calc(100vw - 36px)); padding: 26px; text-align: center;
                     background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
                     box-shadow: 0 18px 45px rgba(28, 33, 40, .2); }
-  .recording-icon { font-size: 42px; line-height: 1; margin-bottom: 12px; }
+  .recording-icon { font-size: 48px; line-height: 1; margin-bottom: 10px; color: var(--accent-dark);
+                    animation: headphoneBounce .8s ease-in-out infinite alternate; }
+  .recording-wave { height: 30px; display: flex; justify-content: center; align-items: center; gap: 5px; margin: 4px 0 14px; }
+  .recording-wave span { width: 5px; height: 10px; border-radius: 4px; background: var(--accent);
+                         animation: recordingBars .75s ease-in-out infinite alternate; }
+  .recording-wave span:nth-child(2) { animation-delay: .12s; }
+  .recording-wave span:nth-child(3) { animation-delay: .24s; }
+  .recording-wave span:nth-child(4) { animation-delay: .36s; }
+  .recording-wave span:nth-child(5) { animation-delay: .48s; }
   .recording-card h2 { margin: 0 0 6px; font-size: 18px; }
   .recording-card p { margin: 0 0 18px; color: var(--muted); }
   .stop-recording { background: #8a3d24; color: #fff; border-color: #8a3d24; }
   button:disabled { opacity: .55; cursor: default; }
   .dots::after { content: '.'; animation: d 1.2s steps(4,end) infinite; }
   @keyframes d { 0%{content:'.'} 33%{content:'..'} 66%{content:'...'} }
+  @keyframes headphonePulse { 50% { transform: scale(1.08); } }
+  @keyframes headphoneBounce { from { transform: translateY(-4px); } to { transform: translateY(4px); } }
+  @keyframes recordingBars { from { height: 7px; transform: translateY(5px); } to { height: 28px; transform: translateY(-5px); } }
+  @media (max-width: 560px) {
+    .wrap { width: 100%; height: 100vh; min-height: 0; margin: 0; border: 0; border-radius: 0; }
+    header { padding: 13px 12px; }
+    header select { max-width: 78px; }
+    #log { padding-left: 12px; padding-right: 12px; }
+    form { margin-left: 10px; margin-right: 10px; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>Paramita Schools Assistant<br><span class="sub">Flask &middot; RAG &middot; tool-calling agent</span></h1>
+    <div class="brand-avatar">P</div><span class="online" aria-label="Online"></span>
+    <h1>Paramita Schools Assistant<span class="sub">Online &middot; School support</span></h1>
     <a class="phone" href="tel:{{ office_phone|replace(' ', '')|replace('/', '') }}" title="Call the school office">Call office</a>
     <select id="role" title="Changes which tools the agent may call">
       <option value="parent">Parent</option>
       <option value="teacher">Teacher</option>
       <option value="admin">Admin</option>
     </select>
-    <button id="reset" title="Clear conversation">Reset</button>
+    <button class="header-icon" id="reset" title="Clear conversation" aria-label="Clear conversation">&#8635;</button>
+    <button class="header-icon" title="Close chat" aria-label="Close chat">&times;</button>
   </header>
 
   <div id="log">
-    <div class="msg bot welcome"><span aria-hidden="true">&#128075;</span><div><strong>Hello, welcome to Paramita Schools.</strong><br>I can help with campuses, attendance, marks, fees, homework, timetables, and school policies.</div></div>
+    <div class="msg bot welcome"><div class="welcome-avatar-wrap"><div class="welcome-avatar">P</div><span class="welcome-online">Online</span></div><div class="welcome-copy">
+      <p><strong>&#128075; Hello, welcome to Paramita Schools.</strong><br>How can I help you today? &#128522;</p>
+    </div></div>
+    <div class="quick-actions">
+      <button class="chip" type="button" onclick="send('How many branches do you have?')">Campus information</button>
+      <button class="chip" type="button" onclick="send('Which branch is CBSE?')">CBSE branches</button>
+      <button class="chip" type="button" onclick="send('What is the leave policy?')">School policies</button>
+      <button class="chip" type="button" onclick="send('I would like to book a campus demo.')">Book a demo</button>
+    </div>
   </div>
 
   <form id="form">
     <input type="text" id="q" placeholder="Ask a question..." autocomplete="off" required>
-    <select class="question-picker" id="questionPicker" title="Choose a suggested question">
-      <option value="">Suggested questions</option>
-      <option>How many branches do you have?</option>
-      <option>Which branch is CBSE?</option>
-      <option>Tell me about the Explorica campus</option>
-      <option>Kabir Menon's attendance this month</option>
-      <option>Any pending fees for Diya Patel?</option>
-      <option>What is the leave policy?</option>
-      <option>Homework for 7A at Heritage</option>
-    </select>
-    <button class="voice" id="voice" type="button" title="Speak your question" aria-label="Speak your question">&#127908;</button>
-    <button class="send" type="submit">Send</button>
+    <button class="voice" id="voice" type="button" title="Record your question" aria-label="Record your question">&#127911;</button>
+    <button class="send" type="submit" title="Send question" aria-label="Send question">&#9654;</button>
   </form>
   <div class="voice-status" id="voiceStatus" role="status" aria-live="polite"></div>
 </div>
@@ -99,6 +138,9 @@
 <div class="recording-popup" id="recordingPopup" role="dialog" aria-modal="true" aria-labelledby="recordingTitle">
   <div class="recording-card">
     <div class="recording-icon" aria-hidden="true">&#127911;</div>
+    <div class="recording-wave" aria-label="Recording in progress">
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
     <h2 id="recordingTitle">Recording your question</h2>
     <p id="recordingText">Speak clearly, then press Stop or Enter.</p>
     <button class="stop-recording" id="stopRecording" type="button">Stop recording</button>
@@ -111,18 +153,9 @@ const form = document.getElementById('form');
 const q = document.getElementById('q');
 const roleSel = document.getElementById('role');
 const voice = document.getElementById('voice');
-const questionPicker = document.getElementById('questionPicker');
 const voiceStatus = document.getElementById('voiceStatus');
 const recordingPopup = document.getElementById('recordingPopup');
 const stopRecording = document.getElementById('stopRecording');
-
-questionPicker.onchange = () => {
-  if (questionPicker.value) {
-    q.value = questionPicker.value;
-    q.focus();
-    questionPicker.value = '';
-  }
-};
 
 let recorder = null;
 let recording = [];
@@ -206,15 +239,24 @@ function render(md){
 
 function bubble(text, who, trace, actions){
   const d = document.createElement('div');
-  d.className = 'msg ' + who;
-  d.innerHTML = who === 'bot' ? render(text) : esc(text);
+  d.className = 'msg ' + who + (who === 'bot' ? ' reply' : '');
+  const body = who === 'bot' ? document.createElement('div') : d;
+  if (who === 'bot') {
+    const avatar = document.createElement('div');
+    avatar.className = 'reply-avatar';
+    avatar.textContent = 'P';
+    d.appendChild(avatar);
+    body.className = 'reply-body';
+    d.appendChild(body);
+  }
+  body.innerHTML = who === 'bot' ? render(text) : esc(text);
   if (trace && trace.length){
     const t = document.createElement('div');
     t.className = 'trace';
     t.innerHTML = trace.map(s =>
       `<span class="${s.ok?'':'bad'}">${s.ok?'&#10003;':'&#10007;'} ${esc(s.tool)}(${esc(JSON.stringify(s.args))})</span>`
     ).join('<br>');
-    d.appendChild(t);
+    body.appendChild(t);
   }
   if (actions && actions.length){
     const a = document.createElement('div');
@@ -226,7 +268,7 @@ function bubble(text, who, trace, actions){
       b.onclick = () => send(action.message);
       a.appendChild(b);
     });
-    d.appendChild(a);
+    body.appendChild(a);
   }
   log.appendChild(d);
   log.scrollTop = log.scrollHeight;
@@ -235,8 +277,8 @@ function bubble(text, who, trace, actions){
 
 async function send(text){
   bubble(text, 'user');
-  const pending = bubble('thinking', 'bot');
-  pending.innerHTML = '<span class="dots">thinking</span>';
+  const pending = bubble('typing', 'bot');
+  pending.querySelector('.reply-body').innerHTML = '<span class="dots">typing</span>';
   form.querySelector('.send').disabled = true;
 
   try {
