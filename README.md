@@ -76,6 +76,7 @@ flask ask "How do I apply for leave?"
 | "Tell me about Jyothinagar" | alias match → `get_branch_info` → Explorica Premium School |
 | "Homework for 7A?" | 5 campuses have Grade 7-A → agent asks **which branch** |
 | "Kabir's attendance in July?" | fuzzy-resolve name → `get_attendance_summary` → SQL |
+| "Was Kabir in on 20 and 21 August?" | `get_attendance_summary(start_date=..., end_date=...)` → day-by-day rows |
 | "Any pending fees for Diya?" | fuzzy-resolve name → `get_fee_status` → SQL |
 | "Which students in 7A are below 75%?" | parse class → `get_class_attendance_report` → SQL (**staff only**) |
 | "How do I apply for leave?" | `search_school_documents` → vector search → cite the source |
@@ -235,6 +236,7 @@ Before you reach for a bigger embedding model, fix your chunking.
 
 ```
 config.py                  all tunables, read from .env
+dburi.py                   builds the database URL; all the SQL Server specifics
 run.py                     entry point
 app/
   __init__.py              app factory + flask CLI commands
@@ -255,7 +257,101 @@ data/docs/                 the RAG corpus — drop .md/.txt/.pdf here
 scripts/test_tools.py      exercise tools + resolver with NO LLM
 ```
 
+
+### Asking about days, not just months
+
+`get_attendance_summary` and `get_class_attendance_report` take either a whole
+month or a real date range:
+
+```python
+get_attendance_summary("Kabir Menon", month="2026-08")                          # whole month
+get_attendance_summary("Kabir Menon", start_date="2026-08-20", end_date="2026-08-21")
+get_attendance_summary("Kabir Menon", start_date="2026-08-20")                  # one day
+```
+
+A range beats `month` when both are given, the two ends are swapped if they
+arrive backwards, and an unreadable date returns a `bad_date` error rather than
+quietly substituting a month.
+
+Periods of ten school days or fewer also come back with a `days` list carrying
+each date and its status. That exists to stop a specific failure: asked whether
+a student was in on two named days, the model used to receive only monthly
+totals and an empty `absent_dates`, reason "not absent, therefore present", and
+then invent which day carried the `late`. Real totals, fabricated detail. The
+model should never have to deduce a fact the database already holds.
+
+Longer periods omit `days` and return aggregates only, because a full month of
+rows is a lot of tokens for a question that wanted a percentage.
+
 ---
+
+## Using SQL Server instead of SQLite
+
+SQLite is the default and needs no setup. Point the app at SQL Server by
+filling in the `DB_BACKEND` block in `.env` — no code changes.
+
+**1. Install the driver.** `pip install -r requirements.txt` gets `pyodbc`, the
+Python binding. You also need Microsoft's [ODBC Driver for SQL
+Server](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server)
+installed on the machine itself. Leaving `MSSQL_DRIVER` blank picks the newest
+one you have.
+
+**2. Create the database.** The app creates its tables but will not create the
+database. Once, in SSMS or `sqlcmd`:
+
+```sql
+CREATE DATABASE school;
+```
+
+**3. Fill in `.env`.**
+
+```ini
+DB_BACKEND=mssql
+MSSQL_HOST=your-server
+MSSQL_DATABASE=school
+MSSQL_USER=your-login          # leave empty to use the Windows account
+MSSQL_PASSWORD=your-password
+```
+
+Use `MSSQL_INSTANCE=SQLEXPRESS` for a named instance **or** `MSSQL_PORT=1433`
+for a default instance on a port — one or the other, never both. A named
+instance is resolved by the SQL Server Browser service, which must be running.
+
+**4. Check it, then load the data.**
+
+```bash
+flask --app run:app db-check     # connects, names the exact problem if it cannot
+flask --app run:app seed-db      # creates tables and the demo school
+```
+
+`db-check` is the one to run when something is wrong. It separates the failures
+that look identical from the outside — driver missing, server unreachable, TCP/IP
+disabled, wrong instance, login rejected, database not created — and prints the
+setting to change for each. The app itself does the same check at startup and
+keeps booting if the database is down, so you get the message instead of a
+driver traceback.
+
+### What is different on SQL Server
+
+Nothing in the tools or the agent. Three things in the schema and config, all
+already handled:
+
+- **Text columns are `NVARCHAR`, not `VARCHAR`.** `models.py` declares
+  `db.Unicode`, because SQL Server's `VARCHAR` silently replaces any character
+  outside the database collation with `?` — which is exactly what happens to LLM
+  answers full of curly quotes and to Telugu names.
+- **Long text is `NVARCHAR(max)`, not `NTEXT`.** SQLAlchemy's default for
+  `UnicodeText` on SQL Server is the deprecated `NTEXT`, which cannot be used in
+  `=`, `GROUP BY` or an index. See `LONG_TEXT` in `models.py`.
+- **`GROUP BY` must list every non-aggregated column.** SQLite infers them from
+  a grouped primary key; SQL Server rejects the query.
+
+Connections are pooled with `pool_pre_ping` so a connection dropped by a
+firewall or a server restart is replaced rather than handed to a request, and
+seeding uses `fast_executemany` to batch the few thousand attendance rows.
+
+To go back to SQLite, set `DB_BACKEND=` empty. The SQLite file is untouched.
+
 
 ## Extending it
 

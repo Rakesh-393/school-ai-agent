@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import case, func
 
@@ -225,6 +225,72 @@ def _month_range(month: str | None, anchor: date | None = None):
     return date(y, m, 1), date(y, m, calendar.monthrange(y, m)[1])
 
 
+# Windows at or under this many school days come back with per-day rows attached.
+# Two school weeks: long enough for "this week", short enough that the rows stay
+# cheap next to the aggregate.
+DAILY_DETAIL_MAX_DAYS = 10
+
+
+def _parse_day(text: str) -> date | None:
+    """'2026-08-20' / '20-08-2026' / '20/08/2026' -> date. None if unreadable."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%d %b %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(t, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _resolve_period(month, start_date, end_date, anchor):
+    """
+    Work out the window a question is really asking about.
+
+    Returns (start, end, error). Exactly one of the first two and the third is
+    meaningful: on a bad argument you get (None, None, payload) and the caller
+    returns that payload untouched.
+
+    Precedence is start/end first, then month, then the anchor month. An explicit
+    range always wins, so a model that helpfully fills in BOTH month and a range
+    cannot end up querying the month by accident.
+
+    WHY THIS REFUSES INSTEAD OF FALLING BACK: _month_range() answers an
+    unreadable month with the anchor month and no signal. That is the right call
+    for a vague "how is she doing this month", and the wrong one everywhere
+    else -- "the last two days" came back as a 21-day month total, indistinguishable
+    from a real answer, and the model then wrote per-day rows it had inferred
+    from the aggregate. A wrong window that announces itself is recoverable; a
+    wrong window that looks correct is not.
+    """
+    if start_date or end_date:
+        # One end alone is a single day, which is a perfectly ordinary question.
+        raw_start = start_date or end_date
+        raw_end = end_date or start_date
+        start, end = _parse_day(raw_start), _parse_day(raw_end)
+
+        # dict.fromkeys, not set: a single date fills both ends, so without
+        # de-duplication a one-date question names the same value twice.
+        bad = list(dict.fromkeys(
+            t for t, d in ((raw_start, start), (raw_end, end)) if d is None
+        ))
+        if bad:
+            return None, None, {
+                "error": "bad_date",
+                "message": f"Could not read {' and '.join(repr(b) for b in bad)} as a date.",
+                "expected_format": "YYYY-MM-DD, e.g. 2026-08-20",
+            }
+        if start > end:
+            # Almost always the model filling the two fields the wrong way round.
+            # Swapping quietly beats an error the user cannot act on.
+            start, end = end, start
+        return start, end, None
+
+    start, end = _month_range(month, anchor=anchor)
+    return start, end, None
+
+
 # ---------------------------------------------------------------- tool impls
 def list_branches(board: str | None = None) -> dict:
     """
@@ -285,13 +351,20 @@ def get_student_profile(student_name: str) -> dict:
     }
 
 
-def get_attendance_summary(student_name: str, month: str | None = None) -> dict:
+def get_attendance_summary(
+    student_name: str,
+    month: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
     s, err = _find_student(student_name)
     if err:
         return err
 
     latest = _latest_attendance_day(s.id)
-    start, end = _month_range(month, anchor=latest)
+    start, end, err = _resolve_period(month, start_date, end_date, anchor=latest)
+    if err:
+        return err
     rows = (
         Attendance.query.filter(
             Attendance.student_id == s.id,
@@ -322,7 +395,7 @@ def get_attendance_summary(student_name: str, month: str | None = None) -> dict:
     present = counts.get("present", 0) + counts.get("late", 0)
     pct = round(present / len(rows) * 100, 1)
 
-    return {
+    out = {
         "student": s.full_name,
         "class": s.klass.label if s.klass else None,
         "period": f"{start} to {end}",
@@ -332,6 +405,19 @@ def get_attendance_summary(student_name: str, month: str | None = None) -> dict:
         "absent_dates": [str(r.day) for r in rows if r.status == "absent"],
         "flag": "BELOW_75_PERCENT" if pct < 75 else "OK",
     }
+
+    # Per-day rows for a short window, so the model can answer "was she in on
+    # Tuesday" from data instead of deducing it. Asked about two specific days,
+    # it used to reason "not in absent_dates, therefore present" and then invent
+    # which day carried the `late` -- a fabricated fact built from real totals.
+    # Capped because a full month of rows is a lot of tokens for a question that
+    # only ever wanted the percentage.
+    if len(rows) <= DAILY_DETAIL_MAX_DAYS:
+        out["days"] = [
+            {"date": str(r.day), "status": r.status, **({"remark": r.remark} if r.remark else {})}
+            for r in rows
+        ]
+    return out
 
 
 def get_marks(
@@ -479,14 +565,22 @@ def get_timetable(class_name: str, weekday: str | None = None, branch: str | Non
 
 
 def get_class_attendance_report(
-    class_name: str, month: str | None = None, branch: str | None = None
+    class_name: str,
+    month: str | None = None,
+    branch: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> dict:
     """Teacher/admin view: who in this class is below 75%."""
     k, err = _find_class(class_name, branch)
     if err:
         return err
 
-    start, end = _month_range(month, anchor=_latest_attendance_day())
+    start, end, err = _resolve_period(
+        month, start_date, end_date, anchor=_latest_attendance_day()
+    )
+    if err:
+        return err
     rows = (
         db.session.query(
             Student.full_name,
@@ -497,7 +591,11 @@ def get_class_attendance_report(
         )
         .join(Attendance, Attendance.student_id == Student.id)
         .filter(Student.class_section_id == k.id, Attendance.day.between(start, end))
-        .group_by(Student.id)
+        # Both columns, not just the id. SQLite happily infers full_name from a
+        # grouped-by primary key; SQL Server (and Postgres in ONLY_FULL_GROUP_BY
+        # spirit) rejects any selected column that is neither aggregated nor
+        # grouped. Listing both is correct everywhere.
+        .group_by(Student.id, Student.full_name)
         .all()
     )
     report = [
@@ -624,7 +722,12 @@ TOOLS: list[dict] = [
     },
     {
         "name": "get_attendance_summary",
-        "description": "Attendance for ONE student for a month: present/absent counts, percentage, absent dates.",
+        "description": (
+            "Attendance for ONE student over a period: present/absent counts, "
+            "percentage, absent dates, plus day-by-day status for short periods. "
+            "Use start_date/end_date for a specific day or a run of days; use "
+            "month for a whole month."
+        ),
         "fn": get_attendance_summary,
         "allowed_for": {"parent", "teacher", "admin"},
         "input_schema": {
@@ -636,7 +739,15 @@ TOOLS: list[dict] = [
                 },
                 "month": {
                     "type": "string",
-                    "description": "Month like 'July' or '2025-07'. Omit for the current month.",
+                    "description": "Whole month, like 'July' or '2025-07'. Ignored if start_date or end_date is given.",
+                },
+                "start_date": {
+                    "type": "string",
+                    "description": "First day of the period, YYYY-MM-DD. For a single day, give this only.",
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "Last day of the period, YYYY-MM-DD, inclusive.",
                 },
             },
             "required": ["student_name"],
@@ -724,8 +835,19 @@ TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "class_name": {"type": "string"},
-                "month": {"type": "string"},
+                "month": {
+                    "type": "string",
+                    "description": "Whole month, like 'July' or '2025-07'. Ignored if start_date or end_date is given.",
+                },
                 "branch": BRANCH_ARG,
+                "start_date": {
+                    "type": "string",
+                    "description": "First day of the period, YYYY-MM-DD. For a single day, give this only.",
+                },
+                "end_date": {
+                    "type": "string",
+                    "description": "Last day of the period, YYYY-MM-DD, inclusive.",
+                },
             },
             "required": ["class_name"],
             "additionalProperties": False,
