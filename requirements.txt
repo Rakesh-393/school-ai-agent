@@ -7,6 +7,12 @@ Flask-SQLAlchemy==3.1.1
 SQLAlchemy==2.0.52
 python-dotenv==1.2.3
 
+# SQL Server, used only when DB_BACKEND=mssql. Harmless to install otherwise.
+# It needs the Microsoft ODBC Driver for SQL Server on the machine as well --
+# the pip package is only the Python binding, not the driver:
+# https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server
+pyodbc==5.3.0
+
 # --- llm providers ---
 # The openai package is used purely as a TRANSPORT for any OpenAI-compatible
 # endpoint: Groq, Google Gemini, Ollama, OpenRouter, Together...
