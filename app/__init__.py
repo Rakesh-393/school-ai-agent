@@ -68,6 +68,14 @@ def _prepare_database() -> None:
     if st.get("server"):
         print(f"  {st['server']}")
 
+    import dburi
+
+    if not dburi.owns_schema():
+        print("  Read-only: this app did not create this database, so it will "
+              "not add or drop tables here.")
+        print("  (Set DB_CREATE_TABLES=yes in .env only if the agent owns this database.)")
+        return
+
     try:
         db.create_all()
     except Exception as exc:            # noqa: BLE001 -- report, never crash boot
@@ -96,7 +104,21 @@ def _register_cli(app: Flask) -> None:
     @click.option("--reset", is_flag=True, help="Drop all tables first.")
     def seed_db(reset):
         """Populate the database with a realistic demo school."""
+        import dburi
         from app.seed import seed
+
+        # --reset means drop_all(), and drop_all() drops by OUR table names. If
+        # one of them happens to exist in someone else's database -- as
+        # `subjects` does in a real HRMS we connected to -- this deletes their
+        # table and their rows. Refuse rather than ask.
+        if not dburi.owns_schema():
+            raise click.ClickException(
+                f"Refusing to seed {dburi.backend()} at {dburi.safe_display_uri()}.\n"
+                "This app did not create that database, and seeding writes demo "
+                "data into it (--reset would DROP tables in it first).\n"
+                "Set DB_BACKEND= empty to seed the local SQLite file, or "
+                "DB_CREATE_TABLES=yes if the agent really does own this database."
+            )
 
         if reset:
             db.drop_all()
@@ -114,12 +136,13 @@ def _register_cli(app: Flask) -> None:
 
     @app.cli.command("ask")
     @click.argument("question")
-    @click.option("--role", default="parent", type=click.Choice(["parent", "teacher", "admin"]))
+    @click.option("--role", default=None,
+                  help="school: parent|teacher|admin.  hrms: employee|hr|admin.")
     def ask(question, role):
         """Ask the agent one question from the terminal."""
-        from app.agent.orchestrator import SchoolAgent
+        from app.agent.orchestrator import get_agent
 
-        result = SchoolAgent(role=role).ask(question)
+        result = get_agent(role).ask(question)
         for t in result["trace"]:
             mark = "ok" if t["ok"] else "!!"
             click.echo(f"  [{mark}] {t['tool']}({t['args']})")

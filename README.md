@@ -237,6 +237,7 @@ Before you reach for a bigger embedding model, fix your chunking.
 ```
 config.py                  all tunables, read from .env
 dburi.py                   builds the database URL; all the SQL Server specifics
+app/hrms/                  the HRMS domain: read-only tools over an HR database
 run.py                     entry point
 app/
   __init__.py              app factory + flask CLI commands
@@ -352,6 +353,52 @@ seeding uses `fast_executemany` to batch the few thousand attendance rows.
 
 To go back to SQLite, set `DB_BACKEND=` empty. The SQLite file is untouched.
 
+
+## The HRMS domain
+
+The same agent loop can run over an existing HR database instead of the demo
+school. Set two things in `.env`:
+
+```ini
+AGENT_DOMAIN=hrms
+DB_BACKEND=mssql          # plus the MSSQL_* block
+```
+
+Roles become `employee`, `hr` and `admin`. Everything else about the loop is
+unchanged, which is the payoff for the tools-not-SQL design: swapping domains
+touches no orchestration code.
+
+```
+app/hrms/
+  schema.py    the HR tables, described for reading only
+  tools.py     the queries -- all SELECT, all aggregates
+  links.py     real URLs the agent may hand out
+  registry.py  tool schemas + role gating, same contract as the school toolkit
+```
+
+**It reads, it never writes.** `dburi.owns_schema()` returns true only for
+SQLite, so `create_all()` is skipped and `seed-db` refuses outright. That guard
+exists because pointing the school agent at a real HRMS made it try to create
+eleven tables inside it. The run only failed because our `subjects` collided
+with their `Subjects`, and `seed-db --reset` would have dropped their table.
+Set `DB_CREATE_TABLES=yes` to opt in a database the agent really owns.
+
+**It reports totals, never people.** `app/hrms/schema.py` describes eight
+columns of `Employee` out of 64. Salary, Aadhaar, PAN, date of birth, parents'
+names and home address are deliberately absent, because a column not described
+there cannot be selected by a tool or surfaced by a model.
+
+**Links come from a file, not the prompt.** A URL in a system prompt is a
+suggestion, and a model will produce a plausible neighbour of it. `links.py`
+holds the real ones; an entry with no URL reports itself as missing, and an
+unverified one is offered with a caveat. There is no path where the model fills
+the gap itself.
+
+**Ask it about attendance and it says no.** There is no attendance, leave or
+payroll data anywhere in the HR schema, so the prompt names that gap explicitly
+and forbids substituting headcount for it.
+
+---
 
 ## Extending it
 

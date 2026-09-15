@@ -3,7 +3,7 @@ import uuid
 
 from flask import Blueprint, jsonify, request, session
 
-from app.agent.orchestrator import SchoolAgent
+from app.agent.orchestrator import get_agent
 from app.models import ChatLog, db
 from config import Config, provider_status
 
@@ -47,7 +47,10 @@ def _explain(e: Exception) -> str:
 def chat():
     data = request.get_json(silent=True) or {}
     question = (data.get("message") or "").strip()
-    role = data.get("role", "parent")
+    # No default here: each domain has its own lowest-privilege role, and
+    # hardcoding "parent" would silently downgrade an HR user to a role that
+    # does not exist in the HRMS registry.
+    role = data.get("role")
 
     if not question:
         return jsonify({"error": "message is required"}), 400
@@ -64,7 +67,7 @@ def chat():
     history = _HISTORY.setdefault(sid, [])
 
     try:
-        result = SchoolAgent(role=role).ask(question, history=history)
+        result = get_agent(role).ask(question, history=history)
     except Exception as e:
         return jsonify({"error": _explain(e)}), 502
 

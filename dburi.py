@@ -171,6 +171,28 @@ def backend() -> str:
     return "sqlite"
 
 
+def owns_schema() -> bool:
+    """
+    May this app create and drop tables in the configured database?
+
+    Only for a database the app owns. SQLite is a file this project created, so
+    yes. Anything else is somebody's existing database until told otherwise, and
+    the honest default is to keep our hands off it.
+
+    WHY THIS EXISTS: create_all() runs on every boot. Pointed at a real
+    company database it tried to create eleven tables inside it, and the run
+    only failed because one of our table names, `subjects`, already existed
+    there with different columns. That collision is what stopped it -- not any
+    safety check, because there wasn't one. Worse, `seed-db --reset` calls
+    drop_all(), which would have resolved `DROP TABLE subjects` to their real
+    Subjects table. Set DB_CREATE_TABLES=yes to opt a non-SQLite database in.
+    """
+    override = os.getenv("DB_CREATE_TABLES", "").strip().lower()
+    if override:
+        return override in TRUE_WORDS
+    return backend() == "sqlite"
+
+
 def database_uri() -> str:
     """The SQLALCHEMY_DATABASE_URI to hand to Flask-SQLAlchemy."""
     if os.getenv("DB_BACKEND", "").strip().lower() == "mssql":

@@ -46,6 +46,12 @@ class Config:
     SQLALCHEMY_ENGINE_OPTIONS = dburi.engine_options()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # --- agent domain ---
+    # "school" is the demo agent over the bundled SQLite school. "hrms" points
+    # the same agent loop at an existing HR database, read-only. The domain
+    # decides which tool registry and system prompt are loaded; nothing else.
+    AGENT_DOMAIN = os.getenv("AGENT_DOMAIN", "school").strip().lower()
+
     # --- llm ---
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
 

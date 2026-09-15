@@ -113,12 +113,21 @@ Warm, brief, professional. You are talking to busy parents and teachers.
 
 
 class SchoolAgent:
-    def __init__(self, role: str = "parent"):
-        self.role = role if role in ("parent", "teacher", "admin") else "parent"
+    # Bound as class attributes, not hardcoded in the loop, so a subclass can
+    # point the same agent at a different database and prompt. HrmsAgent below
+    # is that subclass and overrides exactly these three lines.
+    toolkit = toolkit
+    system_prompt = SYSTEM_PROMPT
+    roles = ("parent", "teacher", "admin")
+    default_role = "parent"
+
+    def __init__(self, role: str = None):
+        role = role or self.default_role
+        self.role = role if role in self.roles else self.default_role
         # Do not even construct a provider client for questions handled by the
         # local fast path below.
         self.llm = None
-        self.tools = toolkit.tools_for_role(self.role)
+        self.tools = self.toolkit.tools_for_role(self.role)
 
     FAST_INTENTS = [
         ("list_branches", "how many branches campuses schools do you have"),
@@ -176,7 +185,7 @@ class SchoolAgent:
                 (b for b in ("cbse", "cambridge", "state") if b in question.lower()),
                 None,
             )) else {}
-        result = toolkit.execute(tool_name, args, self.role)
+        result = self.toolkit.execute(tool_name, args, self.role)
         answer = MockClient._render(tool_name, result)
         trace = {
             "step": 0,
@@ -213,7 +222,7 @@ class SchoolAgent:
         messages: list[dict] = [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT.format(
+                "content": self.system_prompt.format(
                     today=date.today(),
                     role=self.role,
                     office_phone=Config.SCHOOL_OFFICE_PHONE,
@@ -238,7 +247,7 @@ class SchoolAgent:
             self.llm.append_assistant(messages, reply)
 
             for call in reply.tool_calls:
-                result = toolkit.execute(call.name, call.args, self.role)
+                result = self.toolkit.execute(call.name, call.args, self.role)
                 trace.append(
                     {
                         "step": step + 1,
@@ -277,3 +286,78 @@ class SchoolAgent:
             "latency_ms": int((time.perf_counter() - started) * 1000),
           "actions": actions,
         }
+
+
+HRMS_SYSTEM_PROMPT = """You are the assistant for the HRMS (human resources
+management system). You answer questions about the organisation itself: its
+campuses, departments, job titles, subjects, grades, policies and open
+vacancies.
+
+Today's date is {today}. The user's role is: {role}.
+
+HOW TO ANSWER
+- Use the tools. Never state a number, a name, a place or a date unless a tool
+  returned it in this conversation. If no tool gives you the answer, say you do
+  not have it and suggest who to ask.
+- Counts come back already computed, in fields like `total_units` and
+  `total_employees`. Use that number. Do not count the list yourself.
+- Re-check with a tool every time. Do not answer from an earlier turn; the data
+  changes and your memory of it is not a source.
+- Answer in a few short sentences or a small markdown table. No preamble.
+
+LINKS -- read this twice
+Never write a URL from memory, and never adjust one you have seen. Call
+get_resource_link and use exactly what it returns. If it says the link is not
+configured, say the link is not available and point the person at HR. A
+confident wrong URL is worse than no URL, because they will follow it.
+If the tool marks a link unconfirmed, offer it and say it has not been verified.
+
+WHAT THIS SYSTEM DOES NOT HOLD
+There is no attendance, leave, payroll or timesheet data in this database. If
+someone asks how many people were present yesterday, or about leave balances or
+salaries, say plainly that this assistant has no access to that and they should
+contact HR. Do not estimate, and do not substitute headcount for attendance --
+they are different questions.
+
+PRIVACY
+You can report totals and breakdowns. You cannot look up an individual: no
+salary, no contact details, no date of birth, no home address, no identity
+numbers. There is no tool for it, so if you are asked, say it is not something
+this assistant can provide.
+
+TONE
+Warm, brief, professional. You are talking to colleagues.
+"""
+
+
+class HrmsAgent(SchoolAgent):
+    """
+    The same agent loop, pointed at the HR database.
+
+    Everything that makes the loop work -- tool calling, the step cap, the
+    trace, role gating -- is inherited unchanged. Only the three bindings below
+    differ, which is the payoff for the tools-not-SQL design: swapping the whole
+    domain touches no loop code.
+
+    The fast path is off. Its intents are school phrases scored by fuzzy match,
+    and a near-miss there would answer an HR question with a school tool.
+    """
+
+    from app.hrms import registry as _hrms_registry
+
+    toolkit = _hrms_registry
+    system_prompt = HRMS_SYSTEM_PROMPT
+    roles = ("employee", "hr", "admin")
+    default_role = "employee"
+
+    def _fast_answer(self, question: str):
+        return None
+
+
+DOMAINS = {"school": SchoolAgent, "hrms": HrmsAgent}
+
+
+def get_agent(role: str | None = None):
+    """The agent for the configured domain. Set AGENT_DOMAIN in .env."""
+    domain = (Config.AGENT_DOMAIN or "school").strip().lower()
+    return DOMAINS.get(domain, SchoolAgent)(role=role)
