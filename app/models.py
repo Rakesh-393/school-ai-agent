@@ -201,6 +201,11 @@ class TimetableSlot(db.Model):
 
 class ChatLog(db.Model):
     """Every turn is stored: your eval set, your audit trail, your debugging tool."""
+
+    # The only table this app writes. It lives on the "logs" bind, which points
+    # at the main database when the app owns it and at a local SQLite file when
+    # it does not -- see dburi.log_store_uri().
+    __bind_key__ = "logs"
     __tablename__ = "chat_logs"
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.Unicode(64), index=True)

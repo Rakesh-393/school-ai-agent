@@ -44,6 +44,10 @@ class Config:
     DB_BACKEND = dburi.backend()
     SQLALCHEMY_DATABASE_URI = dburi.database_uri()
     SQLALCHEMY_ENGINE_OPTIONS = dburi.engine_options()
+    # ChatLog rides a separate bind so the transcript never has to live in a
+    # database the agent only reads. Same URI when we own the database, so the
+    # school demo keeps its logs in school.db exactly as before.
+    SQLALCHEMY_BINDS = {"logs": dburi.log_store_uri()}
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # --- agent domain ---

@@ -1,7 +1,7 @@
 """JSON API for the agent."""
 import uuid
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, current_app, jsonify, request, session
 
 from app.agent.orchestrator import get_agent
 from app.models import ChatLog, db
@@ -77,17 +77,30 @@ def chat():
     history.append({"role": "assistant", "content": result["answer"]})
     del history[:-_MAX_TURNS]
 
-    db.session.add(
-        ChatLog(
-            session_id=sid,
-            role_context=role,
-            question=question,
-            answer=result["answer"],
-            tools_used=",".join(result["tools_used"]),
-            latency_ms=result["latency_ms"],
+    # Logging is best-effort, and deliberately AFTER the answer is in hand.
+    #
+    # The answer is the product; the log is bookkeeping. Letting bookkeeping
+    # fail the request means a perfectly good reply is thrown away and the user
+    # sees a 500 -- which is exactly what happened the first time this ran
+    # against a database the app does not own: the agent answered correctly,
+    # then the INSERT hit "Invalid object name 'chat_logs'" and the whole
+    # response became a stack trace. Never trade a good answer for a log line.
+    try:
+        db.session.add(
+            ChatLog(
+                session_id=sid,
+                role_context=role,
+                question=question,
+                answer=result["answer"],
+                tools_used=",".join(result["tools_used"]),
+                latency_ms=result["latency_ms"],
+            )
         )
-    )
-    db.session.commit()
+        db.session.commit()
+    except Exception as e:                        # noqa: BLE001
+        # Roll back or the session stays poisoned and the NEXT request fails too.
+        db.session.rollback()
+        current_app.logger.warning("Chat log not saved: %s", e)
 
     return jsonify(result)
 

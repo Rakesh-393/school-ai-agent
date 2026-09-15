@@ -74,6 +74,15 @@ def _prepare_database() -> None:
         print("  Read-only: this app did not create this database, so it will "
               "not add or drop tables here.")
         print("  (Set DB_CREATE_TABLES=yes in .env only if the agent owns this database.)")
+        # chat_logs is ours wherever it lives, and on this path it lives in a
+        # local SQLite file rather than the read-only database. Create it, or
+        # the first chat writes into a table that does not exist.
+        try:
+            db.create_all(bind_key="logs")
+            print(f"  Chat logs: {dburi.log_store_uri()}")
+        except Exception as exc:                # noqa: BLE001
+            print(f"  Chat logs unavailable ({exc}). Answers still work; "
+                  f"transcripts will not be saved.")
         return
 
     try:

@@ -206,6 +206,21 @@ def database_uri() -> str:
     return "sqlite:///school.db"
 
 
+def log_store_uri() -> str:
+    """
+    Where ChatLog rows go.
+
+    Chat logs are the only thing this app writes, and they have no business
+    landing in a database it does not own -- an HR schema should not grow an
+    agent's transcript table, and it would refuse to anyway. When the app owns
+    the database they stay with everything else; otherwise they go to a local
+    SQLite file beside the app.
+    """
+    if owns_schema():
+        return database_uri()
+    return "sqlite:///chat_logs.db"
+
+
 def engine_options() -> dict:
     """
     Engine settings that only make sense for a networked database.
