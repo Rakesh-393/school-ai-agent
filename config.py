@@ -89,6 +89,9 @@ class Config:
 
     # --- agent ---
     MAX_AGENT_STEPS = 5          # hard cap so a confused model can't loop forever
+    # Multi-step jobs (plan, several lookups, write-up) need more room. Still a
+    # hard cap: the loop summarises what it has and stops when it runs out.
+    MAX_JOB_STEPS = int(os.getenv("MAX_JOB_STEPS", "8"))
     FUZZY_ACCEPT = 88            # >= this score -> candidate for auto-accept
     FUZZY_MARGIN = 12            # ...but ONLY if it beats runner-up by this much
     FUZZY_SOLO = 75              # a single candidate this good is accepted alone

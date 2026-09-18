@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Paramita Schools Assistant</title>
+<title>{{ page.title }}</title>
 <style>
   :root {
       --bg: #eef5f0; --panel: #fff; --line: #d8e2db; --ink: #202923;
@@ -104,12 +104,12 @@
 <div class="wrap">
   <header>
     <div class="brand-avatar">P</div><span class="online" aria-label="Online"></span>
-    <h1>Paramita Schools Assistant<span class="sub">Online &middot; School support</span></h1>
+    <h1>{{ page.title }}<span class="sub">Online &middot; {{ page.subtitle }}</span></h1>
     <a class="phone" href="tel:{{ office_phone|replace(' ', '')|replace('/', '') }}" title="Call the school office">Call office</a>
     <select id="role" title="Changes which tools the agent may call">
-      <option value="parent">Parent</option>
-      <option value="teacher">Teacher</option>
-      <option value="admin">Admin</option>
+      {% for value, label in roles %}
+      <option value="{{ value }}"{% if value == default_role %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
     </select>
     <button class="header-icon" id="reset" title="Clear conversation" aria-label="Clear conversation">&#8635;</button>
     <button class="header-icon" title="Close chat" aria-label="Close chat">&times;</button>
@@ -117,13 +117,12 @@
 
   <div id="log">
     <div class="msg bot welcome"><div class="welcome-avatar-wrap"><div class="welcome-avatar">P</div><span class="welcome-online">Online</span></div><div class="welcome-copy">
-      <p><strong>&#128075; Hello, welcome to Paramita Schools.</strong><br>How can I help you today? &#128522;</p>
+      <p><strong>&#128075; {{ page.welcome }}</strong><br>How can I help you today? &#128522;</p>
     </div></div>
     <div class="quick-actions">
-      <button class="chip" type="button" onclick="send('How many branches do you have?')">Campus information</button>
-      <button class="chip" type="button" onclick="send('Which branch is CBSE?')">CBSE branches</button>
-      <button class="chip" type="button" onclick="send('What is the leave policy?')">School policies</button>
-      <button class="chip" type="button" onclick="send('I would like to book a campus demo.')">Book a demo</button>
+      {% for label, message in page.chips %}
+      <button class="chip" type="button" onclick="send({{ message|tojson|forceescape }})">{{ label }}</button>
+      {% endfor %}
     </div>
   </div>
 
@@ -253,9 +252,21 @@ function bubble(text, who, trace, actions){
   if (trace && trace.length){
     const t = document.createElement('div');
     t.className = 'trace';
-    t.innerHTML = trace.map(s =>
-      `<span class="${s.ok?'':'bad'}">${s.ok?'&#10003;':'&#10007;'} ${esc(s.tool)}(${esc(JSON.stringify(s.args))})</span>`
-    ).join('<br>');
+    // A job shows as its plan: the goal, then each step the model chose, with
+    // why it chose it. A plain question shows the single tool, as before.
+    t.innerHTML = trace.map(s => {
+      const mark = s.ok ? '&#10003;' : '&#10007;';
+      if (s.tool === 'make_plan') {
+        return s.ok
+          ? `<strong>Plan: ${esc(s.result.goal)}</strong>`
+          : `<span class="bad">${mark} plan not used: ${esc(s.result.message || '')}</span>`;
+      }
+      if (s.planned) {
+        return `<span class="${s.ok?'':'bad'}">&nbsp;&nbsp;${s.planned}. ${mark} ${esc(s.why || s.tool)}`
+             + ` <span style="opacity:.7">(${esc(s.tool)})</span></span>`;
+      }
+      return `<span class="${s.ok?'':'bad'}">${mark} ${esc(s.tool)}(${esc(JSON.stringify(s.args))})</span>`;
+    }).join('<br>');
     body.appendChild(t);
   }
   if (actions && actions.length){

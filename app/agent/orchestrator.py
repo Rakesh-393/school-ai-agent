@@ -120,6 +120,7 @@ class SchoolAgent:
     system_prompt = SYSTEM_PROMPT
     roles = ("parent", "teacher", "admin")
     default_role = "parent"
+    max_steps = Config.MAX_AGENT_STEPS
 
     def __init__(self, role: str = None):
         role = role or self.default_role
@@ -235,7 +236,7 @@ class SchoolAgent:
         trace: list[dict] = []
         answer = ""
 
-        for step in range(Config.MAX_AGENT_STEPS):
+        for step in range(self.max_steps):
             reply = self.llm.chat(messages, tools=self.tools)
 
             if not reply.wants_tools:
@@ -257,6 +258,23 @@ class SchoolAgent:
                         "result": result,
                     }
                 )
+                # A plan runs several tools inside one call. Surface each of
+                # them as its own trace entry, marked `planned`, so the page,
+                # the CLI and the chat log all show what actually ran -- not
+                # just "make_plan". Without this, tools_used would record a
+                # four-lookup report as a single tool.
+                for sub in result.get("results", []) if call.name == "make_plan" else []:
+                    trace.append(
+                        {
+                            "step": step + 1,
+                            "tool": sub["tool"],
+                            "args": sub["args"],
+                            "ok": sub["ok"],
+                            "result": sub["result"],
+                            "planned": sub["step"],
+                            "why": sub["why"],
+                        }
+                    )
                 self.llm.append_tool_result(messages, call, result)
         else:
             # Loop exhausted without a plain-text answer: ask for a final summary
@@ -332,6 +350,30 @@ HOW TO ANSWER
   the right answer for a company fact you cannot look up, and the wrong answer
   for a question anyone knowledgeable could answer.
 
+QUESTIONS AND JOBS
+A QUESTION needs one lookup: "how many branches", "list the subjects". Call the
+one tool and answer. Do not plan it.
+
+A JOB needs several lookups combined into one result: "prepare a hiring report",
+"compare our branches", "give me an overview of the organisation", "draft a
+post for each open vacancy". For a job:
+  1. Call make_plan with every lookup as a step: the tool, its arguments, and
+     why. Choose the steps yourself from the tools you have; the user will not
+     tell you which. All steps run at once and every result comes back
+     together -- do not call those tools separately as well.
+  2. Only if a step needs another step's result (for example "the unit with
+     the most staff") call that one tool afterwards, once you have the result.
+  3. Before writing, check each step's result against the goal. If something
+     you need is missing and a tool can get it, get it now.
+  4. Write the result as one finished piece: a heading, then the sections,
+     using only figures the tools returned.
+  5. If a step could not be done -- no data, or not allowed for this role --
+     say so in a short line at the end. Never drop a step silently, and never
+     fill the gap with a guess.
+Company facts in a job follow the same rule as anywhere: from a tool or not at
+all. Your own writing -- wording a job post, summarising, recommending -- is
+yours, and you may add general knowledge, labelled as such.
+
 LINKS -- read this twice
 Never write a URL from memory, and never adjust one you have seen. Call
 get_resource_link and use exactly what it returns. If it says the link is not
@@ -380,6 +422,11 @@ class HrmsAgent(SchoolAgent):
     system_prompt = HRMS_SYSTEM_PROMPT
     roles = ("employee", "hr", "admin")
     default_role = "employee"
+    # A job spends a step on make_plan, several on lookups and one on the
+    # write-up, which does not fit in the five a single question needs. The
+    # ceiling only matters when the model uses it; a plain question still
+    # finishes in two steps.
+    max_steps = Config.MAX_JOB_STEPS
 
     def _fast_answer(self, question: str):
         return None

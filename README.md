@@ -238,6 +238,7 @@ Before you reach for a bigger embedding model, fix your chunking.
 config.py                  all tunables, read from .env
 dburi.py                   builds the database URL; all the SQL Server specifics
 app/hrms/                  the HRMS domain: read-only tools over an HR database
+app/agent/planning.py      make_plan: turns a multi-step job into one planned run
 run.py                     entry point
 app/
   __init__.py              app factory + flask CLI commands
@@ -393,6 +394,42 @@ suggestion, and a model will produce a plausible neighbour of it. `links.py`
 holds the real ones; an entry with no URL reports itself as missing, and an
 unverified one is offered with a caveat. There is no path where the model fills
 the gap itself.
+
+**Questions and jobs.** A question needs one lookup and gets one tool call.
+A job needs several combined into one result -- "prepare a hiring report",
+"give me an overview of the organisation" -- and gets a plan. The model calls
+`make_plan` with the steps it chose: each one a tool, its arguments, and why.
+`app/agent/planning.py` runs every step, then hands all the results back at
+once, and the model checks them against the goal and writes the result.
+
+```
+flask --app run:app ask "Prepare a hiring report for HR" --role hr
+  [plan] Hiring report for HR
+     1. [ok] list_vacancies({})              -- get current open positions
+     2. [ok] get_headcount({})               -- total employee count
+     3. [ok] list_designations({})           -- hiring context
+```
+
+Nobody tells it which tables to read. That is the difference between this and
+the one-question-one-lookup pattern: across 90 logged conversations before this
+existed, 75 used exactly one tool and 4 used more than one.
+
+The steps run on the server, not one per model call, for a measured reason.
+Every model call resends the system prompt and tool list, about 2,000 tokens,
+and Groq's free tier allows 8,000 tokens a minute for `gpt-oss-120b`. Asked to
+batch its lookups, the model still made them one per call, ran out of budget by
+the fourth, and the OpenAI client silently waited 13 and 21 seconds on 429s.
+The report took 64 seconds, of which the database took a third of one.
+Plan-and-execute makes it two model calls: about 5 seconds and 7,000 tokens.
+
+That figure is the real constraint on the free tier: **one job a minute, shared
+by every user.** A second job inside the same minute waits. Before this goes
+live for more than a demo, move to a paid Groq tier or a model with a larger
+per-minute budget.
+
+Every planned step still goes through the registry's `execute()` with the
+caller's real role. An employee asking for the hiring report gets one built
+only from what an employee may see.
 
 **Ask it about attendance and it says no.** There is no attendance, leave or
 payroll data anywhere in the HR schema, so the prompt names that gap explicitly

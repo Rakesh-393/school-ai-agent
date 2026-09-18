@@ -16,6 +16,7 @@ to a tool's allowed_for; that is the only change needed.
 """
 from __future__ import annotations
 
+from app.agent.planning import MAKE_PLAN_TOOL
 from app.hrms import links, tools as t
 
 EVERYONE = {"employee", "hr", "admin"}
@@ -24,6 +25,10 @@ STAFF = {"hr", "admin"}
 NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 
 TOOLS: list[dict] = [
+    # First on purpose: for a multi-step job this is the first call the model
+    # should make. It reads no data, so every role may use it; the steps it
+    # lists are still gated tool by tool.
+    {**MAKE_PLAN_TOOL, "allowed_for": EVERYONE},
     {
         "name": "get_organisation_info",
         "description": "The organisation's name, code, address, city, state and country.",
@@ -227,6 +232,12 @@ def execute(name: str, args: dict, role: str) -> dict:
     try:
         allowed = set(spec["input_schema"]["properties"])
         clean = {k: v for k, v in args.items() if k in allowed and v is not None}
+        if spec.get("orchestrates"):
+            # make_plan runs other tools. It gets THIS execute() and the caller's
+            # real role, so each step is gated exactly as if called directly.
+            # They are passed here, never taken from the model's arguments --
+            # the filter above has already dropped anything the model sent.
+            return spec["fn"](**clean, execute=execute, role=role)
         return spec["fn"](**clean)
     except TypeError as e:
         return {"error": "bad_arguments", "message": str(e)}

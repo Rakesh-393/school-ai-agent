@@ -154,6 +154,13 @@ def _register_cli(app: Flask) -> None:
         result = get_agent(role).ask(question)
         for t in result["trace"]:
             mark = "ok" if t["ok"] else "!!"
+            if t["tool"] == "make_plan" and t["ok"]:
+                # The plan is the point of the demo, so print it as a plan.
+                click.echo(f"  [plan] {t['result']['goal']}")
+                continue
+            if t.get("planned"):
+                click.echo(f"     {t['planned']}. [{mark}] {t['tool']}({t['args']})  -- {t['why']}")
+                continue
             click.echo(f"  [{mark}] {t['tool']}({t['args']})")
         click.echo(f"\n{result['answer']}\n({result['latency_ms']} ms)")
 
