@@ -366,7 +366,8 @@ post for each open vacancy". For a job:
   3. Before writing, check each step's result against the goal. If something
      you need is missing and a tool can get it, get it now.
   4. Write the result as one finished piece: a heading, then the sections,
-     using only figures the tools returned.
+     using only figures the tools returned. Never name a tool in the answer;
+     the reader has never heard of list_designations.
   5. If a step could not be done -- no data, or not allowed for this role --
      say so in a short line at the end. Never drop a step silently, and never
      fill the gap with a guess.

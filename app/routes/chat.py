@@ -1,4 +1,5 @@
 """JSON API for the agent."""
+import re
 import uuid
 
 from flask import Blueprint, current_app, jsonify, request, session
@@ -13,6 +14,38 @@ chat_bp = Blueprint("chat", __name__)
 # Fine for learning; move to Redis or the chat_logs table for production.
 _HISTORY: dict[str, list[dict]] = {}
 _MAX_TURNS = 6  # keep the last 3 exchanges -- free models have small context windows
+
+
+def _rate_limit_message(text: str) -> str:
+    """
+    A 429, in words the person chatting can act on.
+
+    This text lands in the chat bubble, so it is written for whoever is asking,
+    not for whoever deployed the app. The old message told them to "switch
+    LLM_PROVIDER to ollama/mock", which is meaningless to a user and was the
+    first thing shown in a live demo.
+
+    Groq's error body already says which limit was hit and how long to wait --
+    "on tokens per minute (TPM) ... Please try again in 6.585s" -- so pass on
+    the wait rather than a vague "a moment". The per-day limits get their own
+    wording, because telling someone to retry in a few seconds when the budget
+    is gone until tomorrow sends them retrying for nothing.
+    """
+    current_app.logger.warning("LLM rate limited: %s", text[:400])
+    low = text.lower()
+
+    if "per day" in low or "(tpd)" in low or "(rpd)" in low:
+        return ("The assistant has used up its free daily allowance and cannot "
+                "answer until it resets. Please contact HR for anything urgent.")
+
+    wait = re.search(r"try again in\s+(?:(\d+)m)?\s*([\d.]+)s", text)
+    if wait:
+        seconds = int(wait.group(1) or 0) * 60 + float(wait.group(2))
+        return (f"The assistant is busy right now: the free AI plan allows only a "
+                f"limited amount of work per minute. Please try again in about "
+                f"{max(1, round(seconds))} seconds.")
+    return ("The assistant is busy right now: the free AI plan allows only a "
+            "limited amount of work per minute. Please try again in a minute.")
 
 
 def _explain(e: Exception) -> str:
@@ -31,8 +64,7 @@ def _explain(e: Exception) -> str:
         return (f"The {Config.LLM_PROVIDER} API key was rejected. Check GROQ_API_KEY in .env "
                 f"(no quotes, no trailing spaces), or set LLM_PROVIDER=mock to run without a key.")
     if "ratelimit" in name.lower() or "429" in text:
-        return (f"{Config.LLM_PROVIDER} rate limit hit -- free tiers are capped per minute. "
-                f"Wait a moment and retry, or switch LLM_PROVIDER to ollama/mock.")
+        return _rate_limit_message(text)
     if "connection" in name.lower() or "connect" in low or "timed out" in low:
         return (f"Could not reach {Config.LLM_PROVIDER}. Check your internet connection"
                 + (f", and that Ollama is running at {Config.OLLAMA_BASE_URL}."

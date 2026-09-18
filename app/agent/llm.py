@@ -28,6 +28,31 @@ from dataclasses import dataclass, field
 from config import Config
 
 
+def tool_result_text(result) -> str:
+    """
+    Serialise a tool result for the model: compact, and without empty fields.
+
+    Tool results are resent on every later model call in the same turn, so their
+    size is paid more than once. Groq's free tier allows 8,000 tokens a minute
+    and a planned job used about 7,000, which left so little headroom that one
+    other question in the same minute tipped a report into a 429.
+
+    Two cheap cuts, neither of which drops information:
+      * separators=(",", ":") removes the space json.dumps puts after every
+        comma and colon -- thousands of characters across a list of records.
+      * None and "" values are dropped. {"code": ""} on 57 designations says
+        nothing 57 times. False and 0 are kept: those are real answers.
+    """
+    def prune(v):
+        if isinstance(v, dict):
+            return {k: prune(x) for k, x in v.items() if x is not None and x != ""}
+        if isinstance(v, list):
+            return [prune(x) for x in v]
+        return v
+
+    return json.dumps(prune(result), default=str, separators=(",", ":"), ensure_ascii=False)
+
+
 @dataclass
 class ToolCall:
     id: str
@@ -102,7 +127,7 @@ class OpenAICompatClient:
                 "role": "tool",
                 "tool_call_id": call.id,
                 "name": call.name,
-                "content": json.dumps(result, default=str),
+                "content": tool_result_text(result),
             }
         )
 
@@ -156,7 +181,7 @@ class AnthropicClient:
         block = {
             "type": "tool_result",
             "tool_use_id": call.id,
-            "content": json.dumps(result, default=str),
+            "content": tool_result_text(result),
         }
         if (
             messages
@@ -456,7 +481,7 @@ class MockClient:
 
     def append_tool_result(self, messages: list[dict], call: ToolCall, result: dict) -> None:
         messages.append({"role": "tool", "tool_call_id": call.id, "name": call.name,
-                         "content": json.dumps(result, default=str)})
+                         "content": tool_result_text(result)})
 
 
 # ---------------------------------------------------------------- factory

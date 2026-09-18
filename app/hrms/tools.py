@@ -233,10 +233,24 @@ def list_designations(category: str | None = None, teaching_only: bool | None = 
         stmt = stmt.where(func.lower(s.Categories.c.CategoryName).like(f"%{category.strip().lower()}%"))
 
     rows = _rows(stmt)
+
+    # Grouped by category, function once per group, titles as a plain list.
+    # The flat form -- {"designation", "code", "function", "category"} per row
+    # -- repeated four field names and a mostly-empty code 57 times, and at
+    # about 1,500 tokens it was the largest single tool result in the system.
+    # It landed in both hiring-report plans, and with Groq's free tier at 8,000
+    # tokens a minute that alone was enough to push a report into a 429.
+    # Same facts, a third of the size.
+    groups: dict[str, dict] = {}
+    for r in rows:
+        cat = r["category"] or "Uncategorised"
+        g = groups.setdefault(cat, {"category": cat, "function": r["function"], "titles": []})
+        g["titles"].append(r["designation"])
+
     out = {
         "total_designations": len(rows),
         "filtered_by": {"category": category, "teaching_only": teaching_only},
-        "designations": rows,
+        "by_category": sorted(groups.values(), key=lambda g: g["category"]),
     }
     if category and not rows:
         # An empty list reads as "there are none", which is a different claim
